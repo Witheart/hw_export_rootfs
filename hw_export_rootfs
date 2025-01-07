@@ -126,7 +126,7 @@ fi
 
 CURDATE=`date "+%Y%m%d%H%M"`
 OS_D=`lsb_release -d -s`
-IMAGE_FILE=$DEST_PATH/${OS_D// /}_Nodka_${STORE_FS_TYPE}_$CURDATE.img
+IMAGE_FILE=$DEST_PATH/${OS_D// /}_HW_${STORE_FS_TYPE}_$CURDATE.img
 TEMP_MOUNT_POINT=`mktemp -d -p $DEST_PATH`
 
 set -e
