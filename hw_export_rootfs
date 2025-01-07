@@ -3,12 +3,13 @@
 function showhelp()
 {
 	echo -e "
-	hw_export_rootfs </path/to/store> [-s <source_path>] [-t <ext4|btrfs>]
+	hw_export_rootfs </path/to/store> [-s <source_path>] [-t <ext4|btrfs>] [-h]
 
 	参数说明：
 	  </path/to/store>    指定镜像文件的存储路径
 	  -s <source_path>    指定要打包的源目录（默认：/）
 	  -t <ext4|btrfs>     指定镜像文件的文件系统类型（默认使用源文件系统类型）
+	  -h                  显示脚本的使用说明
 	"
 	exit -1
 }
@@ -79,6 +80,9 @@ while [[ $# -gt 0 ]]; do
 			STORE_FS_TYPE=$2
 			shift 2
 			;;
+		-h)
+			showhelp
+			;;
 		*)
 			DEST_PATH=$1
 			shift
@@ -125,7 +129,15 @@ if [[ $MEDIA_FREE_SPACE -lt $IMAGE_SIZE ]]; then
 fi
 
 CURDATE=`date "+%Y%m%d%H%M"`
-OS_D=`lsb_release -d -s`
+
+# 从指定目录下获取版本信息
+if [[ -f "$SOURCE_PATH/etc/os-release" ]]; then
+	OS_D=$(grep "^PRETTY_NAME=" "$SOURCE_PATH/etc/os-release" | cut -d= -f2 | tr -d '"')
+else
+	OS_D="Unknown"
+	echo -e "\033[33m Warning: Unable to determine OS version from $SOURCE_PATH/etc/os-release. Using default name: Unknown \033[0m"
+fi
+
 IMAGE_FILE=$DEST_PATH/${OS_D// /}_HW_${STORE_FS_TYPE}_$CURDATE.img
 TEMP_MOUNT_POINT=`mktemp -d -p $DEST_PATH`
 
