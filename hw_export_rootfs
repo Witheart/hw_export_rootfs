@@ -20,8 +20,38 @@ function showhelp()
 
 function prepare_rootfs()
 {
+	# 系统准备和基础清理
+	echo -e "[1/4] 系统准备中..."
 	systemctl enable resize-helper.service > /dev/null 2>&1
+	
+	# 清理APT缓存
+	echo -e "\n[2/4] 正在清理 APT 缓存..."
 	apt-get clean -y
+
+	# 清理Snap缓存
+	echo -e "\n[3/4] 正在清理 Snap 缓存..."
+	if [[ -d "/var/lib/snapd/cache" ]]; then
+		rm -rf /var/lib/snapd/cache/*
+		echo "✅ Snap缓存清理完成"
+	else
+		echo "⚠️  Snap缓存目录不存在，跳过此步骤" >&2
+	fi
+
+	# 清理旧版本Snap包
+	echo -e "\n[4/4] 正在检查旧版本 Snap 包..."
+	OLD_VERSIONS=$(snap list --all | awk '/disabled/{print $1, $3}')
+	if [[ -z "$OLD_VERSIONS" ]]; then
+		echo "未找到可清理的旧版本"
+	else
+		echo "$OLD_VERSIONS" | while read -r snapname revision; do
+			echo "正在删除: $snapname (版本 $revision)"
+			if snap remove "$snapname" --revision="$revision"; then
+				echo "✅ 已删除: $snapname"
+			else
+				echo "❌ 删除失败: $snapname (检查权限或依赖)" >&2
+			fi
+		done
+	fi
 }
 
 function clead_target_rootfs()
@@ -142,7 +172,7 @@ else
 	echo -e "\033[33m Warning: Unable to determine OS version from $SOURCE_PATH/etc/os-release. Using default name: Unknown \033[0m"
 fi
 
-IMAGE_FILE=$DEST_PATH/${OS_D// /}_HW_${STORE_FS_TYPE}_$CURDATE.img
+IMAGE_FILE=$DEST_PATH/${OS_D// /_}_HW_${STORE_FS_TYPE}_$CURDATE.img  # 替换空格为下划线
 TEMP_MOUNT_POINT=`mktemp -d -p $DEST_PATH`
 
 set -e
