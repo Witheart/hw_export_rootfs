@@ -124,6 +124,12 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
+# 提示用户输入提交信息
+read -p "🖊️  请输入本次打包的版本说明（类似git commit信息）：" commit_message
+while [[ -z "$commit_message" ]]; do
+    read -p "❌ 说明不能为空，请重新输入版本说明：" commit_message
+done
+
 [[ -d $DEST_PATH ]] || { echo -e "\033[31m store path not exist \033[0m"; exit -1; }
 [[ -d $SOURCE_PATH ]] || { echo -e "\033[31m source path $SOURCE_PATH does not exist or is not a directory \033[0m"; exit -1; }
 
@@ -162,7 +168,7 @@ if [[ $MEDIA_FREE_SPACE -lt $IMAGE_SIZE ]]; then
 	exit -1
 fi
 
-CURDATE=`date "+%Y%m%d%H%M"`
+CURDATE=$(date "+%Y%m%d%H%M%S")
 
 # 从指定目录下获取版本信息
 if [[ -f "$SOURCE_PATH/etc/os-release" ]]; then
@@ -197,6 +203,18 @@ fi
 echo "sync..."
 rsync -aqx --delete --exclude={"$IMAGE_FILE","$TEMP_MOUNT_POINT"} ${ROOTFS_MOUNTPOINT}/ ${TEMP_MOUNT_POINT}/
 echo "sync finish"
+
+# 创建版本信息文件
+BUILD_INFO="${TEMP_MOUNT_POINT}/etc/buildinfo"
+echo "📦 创建版本标识文件：${BUILD_INFO}"
+mkdir -p "$(dirname "$BUILD_INFO")"
+{
+    echo "# 系统构建信息"
+    echo "BUILD_TIMESTAMP=\"$(date --iso-8601=seconds)\""
+    echo "COMMIT_MESSAGE=\"${commit_message}\""
+    echo "KERNEL_VERSION=\"$(uname -r)\""
+    echo "BUILD_MACHINE=\"$(uname -n)\""
+} | tee "$BUILD_INFO" >/dev/null
 
 set +e
 trap - ERR
