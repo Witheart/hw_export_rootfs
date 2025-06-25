@@ -1,6 +1,6 @@
 #!/bin/bash
 # 本脚本由 Witheart 修改，原脚本来源于 Firefly
-# 更新日期：2025-03-25
+# 更新日期：2025-06-25
 # 用途：导出根文件系统到镜像文件
 # 适用于 Ubuntu 系统
 
@@ -25,8 +25,10 @@ function showhelp()
 
 	版本说明：
 	  作者：Witheart
-	  更新日期：2025-05-07
+	  更新日期：2025-06-25
 
+	版本历史：
+	  1.0.4 - 增加了对 /etc/firstboot_done 的检测和删除
 	  1.0.3 - 增加Snap清理确认机制，避免误清理
 	  1.0.2 - 增加了对版本信息文件的创建，包含构建时间、提交信息和内核版本等
 	  1.0.1 - 增加了对 Snap 缓存的清理功能
@@ -97,6 +99,14 @@ function prepare_rootfs()
 function clead_target_rootfs()
 {
 	ROOT_DIR=$1
+	# 新增：检测并删除 /etc/firstboot_done 文件
+    if [[ -f "${ROOT_DIR}/etc/firstboot_done" ]]; then
+        echo "⚠️  检测到首次启动标记文件，执行删除操作"
+        rm -f "${ROOT_DIR}/etc/firstboot_done"
+    else
+        echo "ℹ️  未找到/etc/firstboot_done文件，跳过删除"
+    fi
+	
 	rm -rf ${ROOT_DIR}/usr/share/doc/*
 	rm -rf ${ROOT_DIR}/var/lib/apt/lists/*
 	rm -rf ${ROOT_DIR}/tmp/*
