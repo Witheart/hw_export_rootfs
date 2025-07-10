@@ -1,52 +1,53 @@
 #!/bin/bash
 # 本脚本由 Witheart 修改，原脚本来源于 Firefly
-# 更新日期：2025-06-25
+# 更新日期：2025-07-10
 # 用途：导出根文件系统到镜像文件
 # 适用于 Ubuntu 系统
 
 function showhelp()
 {
-	echo -e "
-	hw_export_rootfs </path/to/store> [-s <source_path>] [-t <ext4|btrfs>] [-h]
+    echo -e "
+    hw_export_rootfs </path/to/store> [-s <source_path>] [-t <ext4|btrfs>] [-h]
 
-	参数说明：
-	  </path/to/store>    指定镜像文件的存储路径
-	  -s <source_path>    指定要打包的源目录（默认：/）
-	  -t <ext4|btrfs>     指定镜像文件的文件系统类型（默认使用源文件系统类型）
-	  -h                  显示脚本的使用说明
+    参数说明：
+      </path/to/store>    指定镜像文件的存储路径
+      -s <source_path>    指定要打包的源目录（默认：/）
+      -t <ext4|btrfs>     指定镜像文件的文件系统类型（默认使用源文件系统类型）
+      -h                  显示脚本的使用说明
 
-	注意：第一个参数必须是存储路径，后面的参数可以不按顺序输入。
+    注意：第一个参数必须是存储路径，后面的参数可以不按顺序输入。
 
-	功能：
-	  1. 将指定目录下的文件系统导出为镜像文件
-	  2. 支持 ext4 和 btrfs 文件系统类型
-	  3. 自动清理 APT 和 Snap 缓存
-	  4. 创建版本信息文件，包含构建时间、提交信息和内核版本等
+    功能：
+      1. 将指定目录下的文件系统导出为镜像文件
+      2. 支持 ext4 和 btrfs 文件系统类型
+      3. 自动清理 APT 和 Snap 缓存
+      4. 创建版本信息文件，包含构建时间、提交信息和内核版本等
 
-	版本说明：
-	  作者：Witheart
-	  更新日期：2025-06-25
+    版本说明：
+      作者：Witheart
+      更新日期：2025-07-10
 
-	版本历史：
-	  1.0.4 - 增加了对 /etc/firstboot_done 的检测和删除
-	  1.0.3 - 增加Snap清理确认机制，避免误清理
-	  1.0.2 - 增加了对版本信息文件的创建，包含构建时间、提交信息和内核版本等
-	  1.0.1 - 增加了对 Snap 缓存的清理功能
-	  1.0.0 - 初始版本，基于 Firefly 的 ff_export_rootfs 脚本修改，
-	          可打包指定目录下的文件系统为镜像文件
-	"
-	exit -1
+    版本历史：
+      1.0.5 - 支持多行输入版本信息，版本信息文件改为追加形式
+      1.0.4 - 增加了对 /etc/firstboot_done 的检测和删除
+      1.0.3 - 增加Snap清理确认机制，避免误清理
+      1.0.2 - 增加了对版本信息文件的创建，包含构建时间、提交信息和内核版本等
+      1.0.1 - 增加了对 Snap 缓存的清理功能
+      1.0.0 - 初始版本，基于 Firefly 的 ff_export_rootfs 脚本修改，
+              可打包指定目录下的文件系统为镜像文件
+    "
+    exit -1
 }
 
 function prepare_rootfs()
 {
-	# 系统准备和基础清理
-	echo -e "[1/4] 系统准备中..."
-	systemctl enable resize-helper.service > /dev/null 2>&1
-	
-	# 清理APT缓存
-	echo -e "\n[2/4] 正在清理 APT 缓存..."
-	apt-get clean -y
+    # 系统准备和基础清理
+    echo -e "[1/4] 系统准备中..."
+    systemctl enable resize-helper.service > /dev/null 2>&1
+    
+    # 清理APT缓存
+    echo -e "\n[2/4] 正在清理 APT 缓存..."
+    apt-get clean -y
 
     echo -e "\n[3/4] Snap 缓存清理确认"
     echo -e "\033[33m⚠️  警告：即将清理的是本机系统（本脚本运行系统）的 Snap 缓存和旧版本包！\033[0m"
@@ -98,21 +99,21 @@ function prepare_rootfs()
 
 function clead_target_rootfs()
 {
-	ROOT_DIR=$1
-	# 新增：检测并删除 /etc/firstboot_done 文件
+    ROOT_DIR=$1
+    # 新增：检测并删除 /etc/firstboot_done 文件
     if [[ -f "${ROOT_DIR}/etc/firstboot_done" ]]; then
         echo "⚠️  检测到首次启动标记文件，执行删除操作"
         rm -f "${ROOT_DIR}/etc/firstboot_done"
     else
         echo "ℹ️  未找到/etc/firstboot_done文件，跳过删除"
     fi
-	
-	rm -rf ${ROOT_DIR}/usr/share/doc/*
-	rm -rf ${ROOT_DIR}/var/lib/apt/lists/*
-	rm -rf ${ROOT_DIR}/tmp/*
-	find ${ROOT_DIR}/usr/share/man/ -name "*.gz" -exec rm {} \;
-	find ${ROOT_DIR}/var/log/ -type f -name "*.gz" -exec rm {} \;
-	find ${ROOT_DIR}/var/log/ -type f -exec truncate -s 0 {} \;
+    
+    rm -rf ${ROOT_DIR}/usr/share/doc/*
+    rm -rf ${ROOT_DIR}/var/lib/apt/lists/*
+    rm -rf ${ROOT_DIR}/tmp/*
+    find ${ROOT_DIR}/usr/share/man/ -name "*.gz" -exec rm {} \;
+    find ${ROOT_DIR}/var/log/ -type f -name "*.gz" -exec rm {} \;
+    find ${ROOT_DIR}/var/log/ -type f -exec truncate -s 0 {} \;
 
     for item in $(ls ${ROOT_DIR}/media/ 2>/dev/null); do
         if id ${item} > /dev/null 2>&1
@@ -133,15 +134,15 @@ function clead_target_rootfs()
 }
 
 function umount_img() {
-	if mountpoint -q $TEMP_MOUNT_POINT; then
-		umount $TEMP_MOUNT_POINT
-	fi
-	rm -rf $TEMP_MOUNT_POINT
+    if mountpoint -q $TEMP_MOUNT_POINT; then
+        umount $TEMP_MOUNT_POINT
+    fi
+    rm -rf $TEMP_MOUNT_POINT
 }
 
 function finish() {
-	umount_img
-	exit -1
+    umount_img
+    exit -1
 }
 
 [[ $UID -ne 0 ]] && echo -e "\033[31m should run as root \033[0m" && showhelp
@@ -155,30 +156,39 @@ STORE_FS_TYPE=""
 
 # 参数解析
 while [[ $# -gt 0 ]]; do
-	case $1 in
-		-s)
-			SOURCE_PATH=$2
-			shift 2
-			;;
-		-t)
-			STORE_FS_TYPE=$2
-			shift 2
-			;;
-		-h)
-			showhelp
-			;;
-		*)
-			DEST_PATH=$1
-			shift
-			;;
-	esac
+    case $1 in
+        -s)
+            SOURCE_PATH=$2
+            shift 2
+            ;;
+        -t)
+            STORE_FS_TYPE=$2
+            shift 2
+            ;;
+        -h)
+            showhelp
+            ;;
+        *)
+            DEST_PATH=$1
+            shift
+            ;;
+    esac
 done
 
-# 提示用户输入提交信息
-read -p "🖊️  请输入本次打包的版本说明（类似git commit信息）：" commit_message
-while [[ -z "$commit_message" ]]; do
-    read -p "❌ 说明不能为空，请重新输入版本说明：" commit_message
+# 支持多行输入版本信息
+echo -e "\n🖊️  请输入版本说明（支持多行输入，按回车换行，输入 . 在单独一行结束）："
+commit_message=""
+while IFS= read -r line; do
+    [[ "$line" == "." ]] && break
+    [[ -n "$line" ]] && commit_message+="${line}"$'\n'
 done
+commit_message="${commit_message%$'\n'}"  # 去除末尾换行符
+
+# 确保版本信息不为空
+if [[ -z "$commit_message" ]]; then
+    echo "❌ 错误：版本说明不能为空！"
+    exit 1
+fi
 
 [[ -d $DEST_PATH ]] || { echo -e "\033[31m store path not exist \033[0m"; exit -1; }
 [[ -d $SOURCE_PATH ]] || { echo -e "\033[31m source path $SOURCE_PATH does not exist or is not a directory \033[0m"; exit -1; }
@@ -193,19 +203,19 @@ MEDIA_FREE_SPACE=`df $DEST_PATH -m --output=avail | awk 'NR==2 {print $1}'`
 prepare_rootfs
 
 if [[ $STORE_FS_TYPE == "" ]]; then
-	if [[ $ROOTFS_MOUNTPOINT == "/" ]]; then
-		ROOTFS_DEVICE=`findmnt -n -o SOURCE --target /`
-		ROOTFS_TYPE=$(blkid -o value -s TYPE ${ROOTFS_DEVICE})
-	else
-		ROOTFS_TYPE=$(df -T $ROOTFS_MOUNTPOINT | awk 'NR==2 {print $2}')
-	fi
-	STORE_FS_TYPE=$ROOTFS_TYPE
+    if [[ $ROOTFS_MOUNTPOINT == "/" ]]; then
+        ROOTFS_DEVICE=`findmnt -n -o SOURCE --target /`
+        ROOTFS_TYPE=$(blkid -o value -s TYPE ${ROOTFS_DEVICE})
+    else
+        ROOTFS_TYPE=$(df -T $ROOTFS_MOUNTPOINT | awk 'NR==2 {print $2}')
+    fi
+    STORE_FS_TYPE=$ROOTFS_TYPE
 fi
 
 if [[ $STORE_FS_TYPE == "btrfs" ]]; then
-	ROOTFS_SIZE=`btrfs filesystem usage -m $ROOTFS_MOUNTPOINT | grep "Device allocated" | awk '{print $3}'`
+    ROOTFS_SIZE=`btrfs filesystem usage -m $ROOTFS_MOUNTPOINT | grep "Device allocated" | awk '{print $3}'`
 else
-	ROOTFS_SIZE=`du -s -k $ROOTFS_MOUNTPOINT | awk '{print $1}'`
+    ROOTFS_SIZE=`du -s -k $ROOTFS_MOUNTPOINT | awk '{print $1}'`
 fi
 
 IMAGE_SIZE=$((ROOTFS_SIZE>>10))
@@ -215,17 +225,17 @@ echo -e "EXPORT IMAGE SIZE \t $IMAGE_SIZE \t MBytes"
 
 if [[ $MEDIA_FREE_SPACE -lt $IMAGE_SIZE ]]; then
     echo -e "\033[31m No enough free space on $DEST_PATH \033[0m"
-	exit -1
+    exit -1
 fi
 
 CURDATE=$(date "+%Y%m%d%H%M%S")
 
 # 从指定目录下获取版本信息
 if [[ -f "$SOURCE_PATH/etc/os-release" ]]; then
-	OS_D=$(grep "^PRETTY_NAME=" "$SOURCE_PATH/etc/os-release" | cut -d= -f2 | tr -d '"')
+    OS_D=$(grep "^PRETTY_NAME=" "$SOURCE_PATH/etc/os-release" | cut -d= -f2 | tr -d '"')
 else
-	OS_D="Unknown"
-	echo -e "\033[33m Warning: Unable to determine OS version from $SOURCE_PATH/etc/os-release. Using default name: Unknown \033[0m"
+    OS_D="Unknown"
+    echo -e "\033[33m Warning: Unable to determine OS version from $SOURCE_PATH/etc/os-release. Using default name: Unknown \033[0m"
 fi
 
 IMAGE_FILE=$DEST_PATH/${OS_D// /_}_HW_${STORE_FS_TYPE}_$CURDATE.img  # 替换空格为下划线
@@ -235,36 +245,37 @@ set -e
 trap finish ERR INT
 
 if [[ $STORE_FS_TYPE == "btrfs" ]]; then
-	truncate -s ${IMAGE_SIZE}M $IMAGE_FILE
+    truncate -s ${IMAGE_SIZE}M $IMAGE_FILE
     mkfs.btrfs -fq -L rootfs $IMAGE_FILE
     mount -t btrfs -o noatime,compress=lzo $IMAGE_FILE $TEMP_MOUNT_POINT
     btrfs subvolume create $TEMP_MOUNT_POINT/root
-	umount $TEMP_MOUNT_POINT
+    umount $TEMP_MOUNT_POINT
     mount -t btrfs -o noatime,compress=lzo,subvol=root $IMAGE_FILE $TEMP_MOUNT_POINT
 else
-	INODE_COUNT=$(find "${ROOTFS_MOUNTPOINT}" 2>/dev/null | wc -l)
-	INODE_COUNT=$((INODE_COUNT+512))
-	BLOCK_COUNT=$(((ROOTFS_SIZE+INODE_COUNT/4)*15/10))
+    INODE_COUNT=$(find "${ROOTFS_MOUNTPOINT}" 2>/dev/null | wc -l)
+    INODE_COUNT=$((INODE_COUNT+512))
+    BLOCK_COUNT=$(((ROOTFS_SIZE+INODE_COUNT/4)*15/10))
 
-	mkfs.ext4 -Fq -L rootfs -b 1024 -I 128 -N $INODE_COUNT $IMAGE_FILE $BLOCK_COUNT
-	mount $IMAGE_FILE $TEMP_MOUNT_POINT
+    mkfs.ext4 -Fq -L rootfs -b 1024 -I 128 -N $INODE_COUNT $IMAGE_FILE $BLOCK_COUNT
+    mount $IMAGE_FILE $TEMP_MOUNT_POINT
 fi
 
 echo "sync..."
 rsync -aqx --delete --exclude={"$IMAGE_FILE","$TEMP_MOUNT_POINT"} ${ROOTFS_MOUNTPOINT}/ ${TEMP_MOUNT_POINT}/
 echo "sync finish"
 
-# 创建版本信息文件
+# 创建/追加版本信息文件
 BUILD_INFO="${TEMP_MOUNT_POINT}/etc/buildinfo"
-echo "📦 创建版本标识文件：${BUILD_INFO}"
+echo "📦 创建/追加版本标识文件：${BUILD_INFO}"
 mkdir -p "$(dirname "$BUILD_INFO")"
 {
-    echo "# 系统构建信息"
+    echo "# 系统构建信息 - $(date '+%Y-%m-%d %H:%M:%S')"
     echo "BUILD_TIMESTAMP=\"$(date --iso-8601=seconds)\""
     echo "COMMIT_MESSAGE=\"${commit_message}\""
     echo "KERNEL_VERSION=\"$(uname -r)\""
     echo "BUILD_MACHINE=\"$(uname -n)\""
-} | tee "$BUILD_INFO" >/dev/null
+    echo "----------------------------------------"
+} | tee -a "$BUILD_INFO" >/dev/null
 
 set +e
 trap - ERR
@@ -273,8 +284,8 @@ clead_target_rootfs ${TEMP_MOUNT_POINT}
 umount_img
 
 if [[ "${STORE_FS_TYPE}" == "ext4" ]]; then
-	e2fsck -fy ${IMAGE_FILE} 2>&1 > /dev/null
-	resize2fs -M ${IMAGE_FILE} 2>&1 > /dev/null
+    e2fsck -fy ${IMAGE_FILE} 2>&1 > /dev/null
+    resize2fs -M ${IMAGE_FILE} 2>&1 > /dev/null
     tune2fs -C 1 -c 0 -i 0 -e "remount-ro" ${IMAGE_FILE} 2>&1 > /dev/null
 fi
-echo -e "\033[31m Export rootfs to $IMAGE_FILE Success \033[0m"
+echo -e "\033[32m 根文件系统已成功导出至: $IMAGE_FILE \033[0m"
