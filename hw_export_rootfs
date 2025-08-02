@@ -95,6 +95,12 @@ function prepare_rootfs()
             fi
         done
     fi
+
+    # ======== 添加远程软件检测 ========
+    echo -e "\n[4/4] 正在检查系统环境..."
+    if ! check_remote_software_locks; then
+        exit 1
+    fi
 }
 
 function clead_target_rootfs()
@@ -131,6 +137,31 @@ function clead_target_rootfs()
             rsync -aqx "${orig_dir}/" "${ROOT_DIR}/var/lib/docker"
         fi
     fi
+}
+
+# 检测远程软件创建的特殊文件
+function check_remote_software_locks()
+{
+    # 检查源目录内的 /tmp/fuse 文件
+    local fuse_path="/tmp/fuse"
+    
+    # 直接尝试访问文件（不依赖 -e 检测）
+    if ls -ld "$fuse_path" &> /dev/null; then
+        : # 文件可访问，什么都不做
+    else
+        # 检查错误类型是否权限问题
+        err_msg=$(ls -ld "$fuse_path" 2>&1)
+        if [[ "$err_msg" =~ "权限不够" || "$err_msg" =~ "Permission denied" ]]; then
+            echo -e "\033[31m错误：检测到无法访问的文件 ${fuse_path}\033[0m"
+            echo -e "\033[33m⚠️  该文件通常由远程控制软件（如todesk、向日葵）创建且在运行时无法操作\033[0m"
+            echo -e "请执行以下操作："
+            echo -e "  1. 退出所有远程控制软件"
+            echo -e "  2. 手动删除该文件：sudo rm -rf ${fuse_path}"
+            echo -e "处理完成后请重新运行打包脚本！"
+            exit 1
+        fi
+    fi
+    return 0
 }
 
 function umount_img() {
