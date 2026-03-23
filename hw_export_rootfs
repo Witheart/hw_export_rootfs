@@ -25,10 +25,9 @@ function showhelp()
 
     版本说明：
       作者：Witheart
-      更新日期：2026-03-23
+      更新日期：2025-12-24
 
     版本历史：
-        1.0.9 - 去除启用 resize-helper.service
         1.0.8 - 增加了对 systemd journal 日志的清理
         1.0.7 - 增加了对todesk注册文件的检测和删除，防止todesk识别码一致导致的顶号问题
         1.0.6 - 增加了对远程软件生成的/etc/fuse的检测，防止打包失败（只适用于本机打包）
@@ -47,7 +46,7 @@ function prepare_rootfs()
 {
     # 系统准备和基础清理
     echo -e "[1/4] 系统准备中..."
-    # systemctl enable resize-helper.service > /dev/null 2>&1
+    systemctl enable resize-helper.service > /dev/null 2>&1
     
     # 清理APT缓存
     echo -e "\n[2/4] 正在清理 APT 缓存..."
