@@ -88,18 +88,22 @@ function prepare_rootfs()
 
     # 清理旧版本Snap包
     echo -e "\n[3.2/4] 正在检查旧版本 Snap 包..."
-    OLD_VERSIONS=$(snap list --all | awk '/disabled/{print $1, $3}')
-    if [[ -z "$OLD_VERSIONS" ]]; then
-        echo "未找到可清理的旧版本"
+    if command -v snap >/dev/null 2>&1; then
+        OLD_VERSIONS=$(snap list --all 2>/dev/null | awk '/disabled/{print $1, $3}')
+        if [[ -z "$OLD_VERSIONS" ]]; then
+            echo "未找到可清理的旧版本"
+        else
+            echo "$OLD_VERSIONS" | while read -r snapname revision; do
+                echo "正在删除: $snapname (版本 $revision)"
+                if snap remove "$snapname" --revision="$revision"; then
+                    echo "✅ 已删除: $snapname"
+                else
+                    echo "❌ 删除失败: $snapname (检查权限或依赖)" >&2
+                fi
+            done
+        fi
     else
-        echo "$OLD_VERSIONS" | while read -r snapname revision; do
-            echo "正在删除: $snapname (版本 $revision)"
-            if snap remove "$snapname" --revision="$revision"; then
-                echo "✅ 已删除: $snapname"
-            else
-                echo "❌ 删除失败: $snapname (检查权限或依赖)" >&2
-            fi
-        done
+        echo "ℹ️  未安装 Snap，跳过清理"
     fi
 
     # ======== 添加远程软件检测 ========
@@ -338,9 +342,20 @@ function make_ext4_image() {
     rm -rf $mnt_pt
 
     echo "    优化镜像大小..."
+    # 暂时关闭 set -e，因为 e2fsck 修复错误时会返回非 0 状态码导致脚本异常退出
+    set +e
     e2fsck -fy ${img_file} 2>&1 > /dev/null
+    local e2fsck_ret=$?
+    # e2fsck 状态码: 0(无错), 1(已修复), 2(需要重启)。只要小于 4 都认为是成功的
+    if [ $e2fsck_ret -ge 4 ]; then
+        echo "❌ $vol_label 分区 e2fsck 检查失败 (状态码: $e2fsck_ret)"
+        set -e
+        exit 1
+    fi
+    
     resize2fs -M ${img_file} 2>&1 > /dev/null
     tune2fs -C 1 -c 0 -i 0 -e "remount-ro" ${img_file} 2>&1 > /dev/null
+    set -e
     echo "✅ $vol_label 分区导出成功: $img_file"
 }
 
