@@ -107,6 +107,14 @@ function prepare_rootfs()
     if ! check_remote_software_locks; then
         exit 1
     fi
+
+    # 卸载所有用户的 gvfs (桌面环境下打包时常见问题)
+    for gvfs_dir in /home/*/.cache/gvfs; do
+        if mountpoint -q "$gvfs_dir"; then
+            echo "正在卸载挂载点: $gvfs_dir"
+            umount -f "$gvfs_dir" 2>/dev/null || fusermount -uz "$gvfs_dir" 2>/dev/null || true
+        fi
+    done
 }
 
 function clean_rootfs_img()
@@ -240,7 +248,7 @@ MEDIA_FREE_SPACE=`df $DEST_PATH -m --output=avail | awk 'NR==2 {print $1}'`
 
 prepare_rootfs
 
-ROOTFS_SIZE=`du -s -k $ROOTFS_MOUNTPOINT | awk '{print $1}'`
+ROOTFS_SIZE=`du -s -k -x $ROOTFS_MOUNTPOINT 2>/dev/null | awk '{print $1}'`
 IMAGE_SIZE=$((ROOTFS_SIZE>>10))
 IMAGE_SIZE=$((IMAGE_SIZE+IMAGE_SIZE/10+300))
 echo -e "MEDIA FREE SPACE SIZE \t $MEDIA_FREE_SPACE \t MBytes"
@@ -283,9 +291,9 @@ function make_ext4_image() {
     # 计算大小
     local size_kb
     if [ "$is_rootfs" == "true" ]; then
-        size_kb=$(du -s -k --exclude=home --exclude=var ${src_dir} | awk '{print $1}')
+        size_kb=$(du -s -k -x --exclude=home --exclude=var ${src_dir} 2>/dev/null | awk '{print $1}')
     else
-        size_kb=$(du -s -k ${src_dir} | awk '{print $1}')
+        size_kb=$(du -s -k -x --exclude="**/.cache/gvfs" ${src_dir} 2>/dev/null | awk '{print $1}')
     fi
 
     local inode_count=$(find "${src_dir}" 2>/dev/null | wc -l)
@@ -302,9 +310,9 @@ function make_ext4_image() {
 
     echo "    正在同步文件到 $vol_label ..."
     if [ "$is_rootfs" == "true" ]; then
-        rsync -aqx --delete --exclude={"$IMAGE_FILE_ROOTFS","$IMAGE_FILE_HOME","$IMAGE_FILE_VAR","$mnt_pt","/home/*","/var/*"} ${src_dir}/ ${mnt_pt}/
+        rsync -aqx --delete --exclude={"$IMAGE_FILE_ROOTFS","$IMAGE_FILE_HOME","$IMAGE_FILE_VAR","$mnt_pt","/home/*","/var/*","**/.cache/gvfs"} ${src_dir}/ ${mnt_pt}/
     else
-        rsync -aqx --delete --exclude={"$IMAGE_FILE_ROOTFS","$IMAGE_FILE_HOME","$IMAGE_FILE_VAR","$mnt_pt"} ${src_dir}/ ${mnt_pt}/
+        rsync -aqx --delete --exclude={"$IMAGE_FILE_ROOTFS","$IMAGE_FILE_HOME","$IMAGE_FILE_VAR","$mnt_pt","**/.cache/gvfs"} ${src_dir}/ ${mnt_pt}/
     fi
 
     if [ "$is_rootfs" == "true" ]; then
