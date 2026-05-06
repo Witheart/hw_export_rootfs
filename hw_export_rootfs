@@ -7,28 +7,31 @@
 function showhelp()
 {
     echo -e "
-    hw_export_rootfs </path/to/store> [-s <source_path>] [-t <ext4|btrfs>] [-h]
+    hw_export_rootfs </path/to/store> [-s <source_path>] [-h]
 
     参数说明：
       </path/to/store>    指定镜像文件的存储路径
       -s <source_path>    指定要打包的源目录（默认：/）
-      -t <ext4|btrfs>     指定镜像文件的文件系统类型（默认使用源文件系统类型）
       -h                  显示脚本的使用说明
 
     注意：第一个参数必须是存储路径，后面的参数可以不按顺序输入。
 
     功能：
-      1. 将指定目录下的文件系统导出为镜像文件
-      2. 支持 ext4 和 btrfs 文件系统类型
-      3. 自动清理 APT 和 Snap 缓存
-      4. 创建版本信息文件，包含构建时间、提交信息和内核版本等
+      1. 将指定目录下的文件系统分别导出为三个独立的 ext4 镜像文件：
+         - rootfs.img (根分区，不含 /home 和 /var)
+         - home.img (/home 分区)
+         - var.img (/var 分区)
+      2. 自动清理 APT 和 Snap 缓存
+      3. 创建版本信息文件，包含构建时间、提交信息和内核版本等
 
     版本说明：
       作者：Witheart
-      更新日期：2025-12-24
+      更新日期：2026-05-06
 
     版本历史：
+        1.1.0 - 重新设计打包逻辑，支持将根分区、home分区、var分区分别打包为独立镜像
         1.0.8 - 增加了对 systemd journal 日志的清理
+
         1.0.7 - 增加了对todesk注册文件的检测和删除，防止todesk识别码一致导致的顶号问题
         1.0.6 - 增加了对远程软件生成的/etc/fuse的检测，防止打包失败（只适用于本机打包）
         1.0.5 - 支持多行输入版本信息，版本信息文件改为追加形式
@@ -106,41 +109,24 @@ function prepare_rootfs()
     fi
 }
 
-function clead_target_rootfs()
+function clean_rootfs_img()
 {
     ROOT_DIR=$1
-    # 新增：检测并删除 /etc/firstboot_done 文件
+    # 检测并删除 /etc/firstboot_done 文件
     if [[ -f "${ROOT_DIR}/etc/firstboot_done" ]]; then
         echo "⚠️  检测到首次启动标记文件，执行删除操作"
         rm -f "${ROOT_DIR}/etc/firstboot_done"
-    else
-        echo "ℹ️  未找到/etc/firstboot_done文件，跳过删除"
     fi
 
-    # 新增：检测并删除 ToDesk 注册文件
+    # 检测并删除 ToDesk 注册文件
     if [[ -f "${ROOT_DIR}/etc/todesk/reg.conf" ]]; then
         echo "⚠️  检测到预装 todesk 注册文件，执行删除操作（重置识别码）"
         rm -f "${ROOT_DIR}/etc/todesk/reg.conf"
-    else
-        echo "ℹ️  未找到/etc/todesk/reg.conf文件，跳过删除"
     fi
     
-    rm -rf ${ROOT_DIR}/usr/share/doc/*
-    rm -rf ${ROOT_DIR}/var/lib/apt/lists/*
-    rm -rf ${ROOT_DIR}/tmp/*
-    find ${ROOT_DIR}/usr/share/man/ -name "*.gz" -exec rm {} \;
-    find ${ROOT_DIR}/var/log/ -type f -name "*.gz" -exec rm {} \;
-    find ${ROOT_DIR}/var/log/ -type f -exec truncate -s 0 {} \;
-
-    # 新增：清理 systemd journal 日志
-    echo "清理 systemd journal 日志..."
-    if [[ -d "${ROOT_DIR}/var/log/journal" ]]; then
-        # 删除 journal 目录中的所有内容
-        rm -rf ${ROOT_DIR}/var/log/journal/*
-        echo "✅ 已清理 systemd journal 日志"
-    else
-        echo "ℹ️  未找到 /var/log/journal 目录，跳过清理"
-    fi
+    rm -rf ${ROOT_DIR}/usr/share/doc/* 2>/dev/null
+    rm -rf ${ROOT_DIR}/tmp/* 2>/dev/null
+    find ${ROOT_DIR}/usr/share/man/ -name "*.gz" -exec rm {} \; 2>/dev/null || true
 
     for item in $(ls ${ROOT_DIR}/media/ 2>/dev/null); do
         if id ${item} > /dev/null 2>&1
@@ -148,17 +134,22 @@ function clead_target_rootfs()
             chown -R ${item}:${item} ${ROOT_DIR}/media/${item}
         fi
     done
+}
 
-    if [[ -L "${ROOT_DIR}/var/lib/docker" ]]
-    then
-        orig_dir=$(readlink "${ROOT_DIR}/var/lib/docker")
-        if [[ ! -d ${ROOT_DIR}/${orig_dir} ]]
-        then
-            rm -rf "${ROOT_DIR}/var/lib/docker"
-            rsync -aqx "${orig_dir}/" "${ROOT_DIR}/var/lib/docker"
-        fi
+function clean_var_img()
+{
+    VAR_DIR=$1
+    rm -rf ${VAR_DIR}/lib/apt/lists/* 2>/dev/null
+    find ${VAR_DIR}/log/ -type f -name "*.gz" -exec rm {} \; 2>/dev/null || true
+    find ${VAR_DIR}/log/ -type f -exec truncate -s 0 {} \; 2>/dev/null || true
+
+    echo "清理 systemd journal 日志..."
+    if [[ -d "${VAR_DIR}/log/journal" ]]; then
+        rm -rf ${VAR_DIR}/log/journal/* 2>/dev/null
+        echo "✅ 已清理 systemd journal 日志"
     fi
 }
+
 
 # 检测远程软件创建的特殊文件
 function check_remote_software_locks()
@@ -186,10 +177,10 @@ function check_remote_software_locks()
 }
 
 function umount_img() {
-    if mountpoint -q $TEMP_MOUNT_POINT; then
-        umount $TEMP_MOUNT_POINT
+    if [[ -n "$TEMP_MOUNT_POINT" ]] && mountpoint -q "$TEMP_MOUNT_POINT"; then
+        umount "$TEMP_MOUNT_POINT"
     fi
-    rm -rf $TEMP_MOUNT_POINT
+    [[ -n "$TEMP_MOUNT_POINT" ]] && rm -rf "$TEMP_MOUNT_POINT"
 }
 
 function finish() {
@@ -204,17 +195,12 @@ function finish() {
 # 新增变量
 SOURCE_PATH="/"
 DEST_PATH=""
-STORE_FS_TYPE=""
 
 # 参数解析
 while [[ $# -gt 0 ]]; do
     case $1 in
         -s)
             SOURCE_PATH=$2
-            shift 2
-            ;;
-        -t)
-            STORE_FS_TYPE=$2
             shift 2
             ;;
         -h)
@@ -254,26 +240,11 @@ MEDIA_FREE_SPACE=`df $DEST_PATH -m --output=avail | awk 'NR==2 {print $1}'`
 
 prepare_rootfs
 
-if [[ $STORE_FS_TYPE == "" ]]; then
-    if [[ $ROOTFS_MOUNTPOINT == "/" ]]; then
-        ROOTFS_DEVICE=`findmnt -n -o SOURCE --target /`
-        ROOTFS_TYPE=$(blkid -o value -s TYPE ${ROOTFS_DEVICE})
-    else
-        ROOTFS_TYPE=$(df -T $ROOTFS_MOUNTPOINT | awk 'NR==2 {print $2}')
-    fi
-    STORE_FS_TYPE=$ROOTFS_TYPE
-fi
-
-if [[ $STORE_FS_TYPE == "btrfs" ]]; then
-    ROOTFS_SIZE=`btrfs filesystem usage -m $ROOTFS_MOUNTPOINT | grep "Device allocated" | awk '{print $3}'`
-else
-    ROOTFS_SIZE=`du -s -k $ROOTFS_MOUNTPOINT | awk '{print $1}'`
-fi
-
+ROOTFS_SIZE=`du -s -k $ROOTFS_MOUNTPOINT | awk '{print $1}'`
 IMAGE_SIZE=$((ROOTFS_SIZE>>10))
 IMAGE_SIZE=$((IMAGE_SIZE+IMAGE_SIZE/10+300))
 echo -e "MEDIA FREE SPACE SIZE \t $MEDIA_FREE_SPACE \t MBytes"
-echo -e "EXPORT IMAGE SIZE \t $IMAGE_SIZE \t MBytes"
+echo -e "TOTAL EXPORT IMAGES SIZE \t $IMAGE_SIZE \t MBytes"
 
 if [[ $MEDIA_FREE_SPACE -lt $IMAGE_SIZE ]]; then
     echo -e "\033[31m No enough free space on $DEST_PATH \033[0m"
@@ -290,54 +261,89 @@ else
     echo -e "\033[33m Warning: Unable to determine OS version from $SOURCE_PATH/etc/os-release. Using default name: Unknown \033[0m"
 fi
 
-IMAGE_FILE=$DEST_PATH/${OS_D// /_}_HW_${STORE_FS_TYPE}_$CURDATE.img  # 替换空格为下划线
-TEMP_MOUNT_POINT=`mktemp -d -p $DEST_PATH`
+IMAGE_FILE_ROOTFS=$DEST_PATH/${OS_D// /_}_HW_rootfs_$CURDATE.img
+IMAGE_FILE_HOME=$DEST_PATH/${OS_D// /_}_HW_home_$CURDATE.img
+IMAGE_FILE_VAR=$DEST_PATH/${OS_D// /_}_HW_var_$CURDATE.img
 
 set -e
 trap finish ERR INT
 
-if [[ $STORE_FS_TYPE == "btrfs" ]]; then
-    truncate -s ${IMAGE_SIZE}M $IMAGE_FILE
-    mkfs.btrfs -fq -L rootfs $IMAGE_FILE
-    mount -t btrfs -o noatime,compress=lzo $IMAGE_FILE $TEMP_MOUNT_POINT
-    btrfs subvolume create $TEMP_MOUNT_POINT/root
-    umount $TEMP_MOUNT_POINT
-    mount -t btrfs -o noatime,compress=lzo,subvol=root $IMAGE_FILE $TEMP_MOUNT_POINT
-else
-    INODE_COUNT=$(find "${ROOTFS_MOUNTPOINT}" 2>/dev/null | wc -l)
-    INODE_COUNT=$((INODE_COUNT+512))
-    BLOCK_COUNT=$(((ROOTFS_SIZE+INODE_COUNT/4)*15/10))
+function make_ext4_image() {
+    local src_dir=$1
+    local img_file=$2
+    local vol_label=$3
+    local is_rootfs=$4
 
-    mkfs.ext4 -Fq -L rootfs -b 1024 -I 128 -N $INODE_COUNT $IMAGE_FILE $BLOCK_COUNT
-    mount $IMAGE_FILE $TEMP_MOUNT_POINT
-fi
+    echo -e "\n[+] 开始打包分区: $vol_label ..."
+    if [[ ! -d "$src_dir" ]]; then
+        echo "⚠️ 目录 $src_dir 不存在，将创建一个空的分区镜像"
+        mkdir -p "$src_dir"
+    fi
 
-echo "sync..."
-rsync -aqx --delete --exclude={"$IMAGE_FILE","$TEMP_MOUNT_POINT"} ${ROOTFS_MOUNTPOINT}/ ${TEMP_MOUNT_POINT}/
-echo "sync finish"
+    # 计算大小
+    local size_kb
+    if [ "$is_rootfs" == "true" ]; then
+        size_kb=$(du -s -k --exclude=home --exclude=var ${src_dir} | awk '{print $1}')
+    else
+        size_kb=$(du -s -k ${src_dir} | awk '{print $1}')
+    fi
 
-# 创建/追加版本信息文件
-BUILD_INFO="${TEMP_MOUNT_POINT}/etc/buildinfo"
-echo "📦 创建/追加版本标识文件：${BUILD_INFO}"
-mkdir -p "$(dirname "$BUILD_INFO")"
-{
-    echo "# 系统构建信息 - $(date '+%Y-%m-%d %H:%M:%S')"
-    echo "BUILD_TIMESTAMP=\"$(date --iso-8601=seconds)\""
-    echo "COMMIT_MESSAGE=\"${commit_message}\""
-    echo "KERNEL_VERSION=\"$(uname -r)\""
-    echo "BUILD_MACHINE=\"$(uname -n)\""
-    echo "----------------------------------------"
-} | tee -a "$BUILD_INFO" >/dev/null
+    local inode_count=$(find "${src_dir}" 2>/dev/null | wc -l)
+    inode_count=$((inode_count+5000))
+    local block_count=$(((size_kb+inode_count/4)*15/10))
+    # 最小 50MB 防止过小
+    if [ $block_count -lt 51200 ]; then
+        block_count=51200
+    fi
+
+    mkfs.ext4 -Fq -L $vol_label -b 1024 -I 128 -N $inode_count $img_file $block_count
+    local mnt_pt=$(mktemp -d -p $DEST_PATH)
+    mount $img_file $mnt_pt
+
+    echo "    正在同步文件到 $vol_label ..."
+    if [ "$is_rootfs" == "true" ]; then
+        rsync -aqx --delete --exclude={"$IMAGE_FILE_ROOTFS","$IMAGE_FILE_HOME","$IMAGE_FILE_VAR","$mnt_pt","/home/*","/var/*"} ${src_dir}/ ${mnt_pt}/
+    else
+        rsync -aqx --delete --exclude={"$IMAGE_FILE_ROOTFS","$IMAGE_FILE_HOME","$IMAGE_FILE_VAR","$mnt_pt"} ${src_dir}/ ${mnt_pt}/
+    fi
+
+    if [ "$is_rootfs" == "true" ]; then
+        # 创建/追加版本信息文件
+        BUILD_INFO="${mnt_pt}/etc/buildinfo"
+        echo "📦 创建版本标识文件：${BUILD_INFO}"
+        mkdir -p "$(dirname "$BUILD_INFO")"
+        {
+            echo "# 系统构建信息 - $(date '+%Y-%m-%d %H:%M:%S')"
+            echo "BUILD_TIMESTAMP=\"$(date --iso-8601=seconds)\""
+            echo "COMMIT_MESSAGE=\"${commit_message}\""
+            echo "KERNEL_VERSION=\"$(uname -r)\""
+            echo "BUILD_MACHINE=\"$(uname -n)\""
+            echo "----------------------------------------"
+        } | tee -a "$BUILD_INFO" >/dev/null
+
+        clean_rootfs_img ${mnt_pt}
+    elif [ "$vol_label" == "var" ]; then
+        clean_var_img ${mnt_pt}
+    fi
+
+    umount $mnt_pt
+    rm -rf $mnt_pt
+
+    echo "    优化镜像大小..."
+    e2fsck -fy ${img_file} 2>&1 > /dev/null
+    resize2fs -M ${img_file} 2>&1 > /dev/null
+    tune2fs -C 1 -c 0 -i 0 -e "remount-ro" ${img_file} 2>&1 > /dev/null
+    echo "✅ $vol_label 分区导出成功: $img_file"
+}
+
+make_ext4_image "$ROOTFS_MOUNTPOINT" "$IMAGE_FILE_ROOTFS" "rootfs" "true"
+make_ext4_image "$ROOTFS_MOUNTPOINT/home" "$IMAGE_FILE_HOME" "home" "false"
+make_ext4_image "$ROOTFS_MOUNTPOINT/var" "$IMAGE_FILE_VAR" "var" "false"
 
 set +e
 trap - ERR
 
-clead_target_rootfs ${TEMP_MOUNT_POINT}
-umount_img
-
-if [[ "${STORE_FS_TYPE}" == "ext4" ]]; then
-    e2fsck -fy ${IMAGE_FILE} 2>&1 > /dev/null
-    resize2fs -M ${IMAGE_FILE} 2>&1 > /dev/null
-    tune2fs -C 1 -c 0 -i 0 -e "remount-ro" ${IMAGE_FILE} 2>&1 > /dev/null
-fi
-echo -e "\033[32m 根文件系统已成功导出至: $IMAGE_FILE \033[0m"
+echo -e "\n\033[32m 🎉 所有分区镜像已成功导出至: $DEST_PATH \033[0m"
+echo -e "\033[32m - $IMAGE_FILE_ROOTFS \033[0m"
+echo -e "\033[32m - $IMAGE_FILE_HOME \033[0m"
+echo -e "\033[32m - $IMAGE_FILE_VAR \033[0m"
