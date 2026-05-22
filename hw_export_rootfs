@@ -46,7 +46,7 @@ function prepare_rootfs()
 {
     # 系统准备和基础清理
     echo -e "[1/4] 系统准备中..."
-    systemctl enable resize-helper.service > /dev/null 2>&1
+    systemctl enable resize-helper.service > /dev/null 2>&1 # 启用resize-helper服务（firefly自带的服务），确保首次启动后自动调整分区大小
     
     # 清理APT缓存
     echo -e "\n[2/4] 正在清理 APT 缓存..."
