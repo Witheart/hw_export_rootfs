@@ -1,6 +1,6 @@
 #!/bin/bash
 # 本脚本由 Witheart 修改，原脚本来源于 Firefly
-# 更新日期：2025-07-10
+# 更新日期：2026-05-22（针对 overlayroot 环境进行了适配优化）
 # 用途：导出根文件系统到镜像文件
 # 适用于 Ubuntu 系统
 
@@ -11,33 +11,20 @@ function showhelp()
 
     参数说明：
       </path/to/store>    指定镜像文件的存储路径
-      -s <source_path>    指定要打包的源目录（默认：/）
+      -s <source_path>    指定要打包的源目录（在 overlayroot 系统下，默认自动识别 /media/root-ro）
       -t <ext4|btrfs>     指定镜像文件的文件系统类型（默认使用源文件系统类型）
       -h                  显示脚本的使用说明
 
     注意：第一个参数必须是存储路径，后面的参数可以不按顺序输入。
 
     功能：
-      1. 将指定目录下的文件系统导出为镜像文件
+      1. 将指定目录下的文件系统导出为镜像文件（兼容 overlayroot）
       2. 支持 ext4 和 btrfs 文件系统类型
       3. 自动清理 APT 和 Snap 缓存
       4. 创建版本信息文件，包含构建时间、提交信息和内核版本等
 
     版本说明：
-      作者：Witheart
-      更新日期：2025-12-24
-
-    版本历史：
-        1.0.8 - 增加了对 systemd journal 日志的清理
-        1.0.7 - 增加了对todesk注册文件的检测和删除，防止todesk识别码一致导致的顶号问题
-        1.0.6 - 增加了对远程软件生成的/etc/fuse的检测，防止打包失败（只适用于本机打包）
-        1.0.5 - 支持多行输入版本信息，版本信息文件改为追加形式
-        1.0.4 - 增加了对 /etc/firstboot_done 的检测和删除
-        1.0.3 - 增加Snap清理确认机制，避免误清理
-        1.0.2 - 增加了对版本信息文件的创建，包含构建时间、提交信息和内核版本等
-        1.0.1 - 增加了对 Snap 缓存的清理功能
-        1.0.0 - 初始版本，基于 Firefly 的 ff_export_rootfs 脚本修改，
-                可打包指定目录下的文件系统为镜像文件
+      优化：适配 overlayroot 环境，默认提取只读底层，并在同步后安全清理。
     "
     exit -1
 }
@@ -46,11 +33,15 @@ function prepare_rootfs()
 {
     # 系统准备和基础清理
     echo -e "[1/4] 系统准备中..."
-    systemctl enable resize-helper.service > /dev/null 2>&1 # 启用resize-helper服务（firefly自带的服务），确保首次启动后自动调整分区大小
     
-    # 清理APT缓存
-    echo -e "\n[2/4] 正在清理 APT 缓存..."
-    apt-get clean -y
+    # 如果源目录是可写的（或者是当前根目录），尝试提前清理
+    if [ "$ROOTFS_MOUNTPOINT" = "/" ] || [ -w "$ROOTFS_MOUNTPOINT" ]; then
+        systemctl enable resize-helper.service > /dev/null 2>&1
+        echo -e "\n[2/4] 正在清理源目录的 APT 缓存..."
+        apt-get clean -y
+    else
+        echo -e "\n[2/4] 源目录为只读或外部挂载，跳过前期 APT 清理（将在同步到临时目录后清理）"
+    fi
 
     echo -e "\n[3/4] Snap 缓存清理确认"
     echo -e "\033[33m⚠️  警告：即将清理的是本机系统（本脚本运行系统）的 Snap 缓存和旧版本包！\033[0m"
@@ -125,6 +116,8 @@ function clead_target_rootfs()
         echo "ℹ️  未找到/etc/todesk/reg.conf文件，跳过删除"
     fi
     
+    # 在临时可写目录中追加补救式的底层清理（针对从只读源复制过来的情况）
+    rm -rf ${ROOT_DIR}/var/cache/apt/archives/*
     rm -rf ${ROOT_DIR}/usr/share/doc/*
     rm -rf ${ROOT_DIR}/var/lib/apt/lists/*
     rm -rf ${ROOT_DIR}/tmp/*
@@ -135,7 +128,6 @@ function clead_target_rootfs()
     # 新增：清理 systemd journal 日志
     echo "清理 systemd journal 日志..."
     if [[ -d "${ROOT_DIR}/var/log/journal" ]]; then
-        # 删除 journal 目录中的所有内容
         rm -rf ${ROOT_DIR}/var/log/journal/*
         echo "✅ 已清理 systemd journal 日志"
     else
@@ -158,19 +150,19 @@ function clead_target_rootfs()
             rsync -aqx "${orig_dir}/" "${ROOT_DIR}/var/lib/docker"
         fi
     fi
+    
+    # 核心安全操作：确保导出的根镜像中，media下的只读和读写挂载点是空的目录
+    echo "🧹 正在清理镜像内部的外部挂载残留..."
+    rm -rf ${ROOT_DIR}/media/root-ro/* ${ROOT_DIR}/media/root-rw/*
 }
 
 # 检测远程软件创建的特殊文件
 function check_remote_software_locks()
 {
-    # 检查源目录内的 /tmp/fuse 文件
     local fuse_path="/tmp/fuse"
-    
-    # 直接尝试访问文件（不依赖 -e 检测）
     if ls -ld "$fuse_path" &> /dev/null; then
-        : # 文件可访问，什么都不做
+        : 
     else
-        # 检查错误类型是否权限问题
         err_msg=$(ls -ld "$fuse_path" 2>&1)
         if [[ "$err_msg" =~ "权限不够" || "$err_msg" =~ "Permission denied" ]]; then
             echo -e "\033[31m错误：检测到无法访问的文件 ${fuse_path}\033[0m"
@@ -201,8 +193,15 @@ function finish() {
 [[ -n "$(which rsync)" ]] || { echo -e " rsync not found\n\033[31m apt install rsync \033[0m"; exit -1; }
 [[ $# -lt 1 ]] && showhelp;
 
-# 新增变量
-SOURCE_PATH="/"
+# 智能重置默认源路径：检测到 overlayroot 时自动切到只读底层分区挂载点
+if [ -d "/media/root-ro" ] && mountpoint -q /media/root-ro; then
+    SOURCE_PATH="/media/root-ro"
+    echo -e "\033[32mℹ️  检测到当前系统运行于 overlayroot 环境。\033[0m"
+    echo -e "\033[32m自动选择底层的只读根分区进行打包: ${SOURCE_PATH}\033[0m"
+else
+    SOURCE_PATH="/"
+fi
+
 DEST_PATH=""
 STORE_FS_TYPE=""
 
@@ -234,9 +233,8 @@ while IFS= read -r line; do
     [[ "$line" == "." ]] && break
     [[ -n "$line" ]] && commit_message+="${line}"$'\n'
 done
-commit_message="${commit_message%$'\n'}"  # 去除末尾换行符
+commit_message="${commit_message%$'\n'}"
 
-# 确保版本信息不为空
 if [[ -z "$commit_message" ]]; then
     echo "❌ 错误：版本说明不能为空！"
     exit 1
@@ -245,8 +243,6 @@ fi
 [[ -d $DEST_PATH ]] || { echo -e "\033[31m store path not exist \033[0m"; exit -1; }
 [[ -d $SOURCE_PATH ]] || { echo -e "\033[31m source path $SOURCE_PATH does not exist or is not a directory \033[0m"; exit -1; }
 
-PORT_OVERLAYROOT=false
-
 ROOTFS_MOUNTPOINT="$SOURCE_PATH"
 
 MEDIA_FS_TYPE=`df $DEST_PATH --output=fstype | awk 'NR==2 {print $1}'`
@@ -254,14 +250,11 @@ MEDIA_FREE_SPACE=`df $DEST_PATH -m --output=avail | awk 'NR==2 {print $1}'`
 
 prepare_rootfs
 
+# 智能识别底层实际文件系统类型
 if [[ $STORE_FS_TYPE == "" ]]; then
-    if [[ $ROOTFS_MOUNTPOINT == "/" ]]; then
-        ROOTFS_DEVICE=`findmnt -n -o SOURCE --target /`
-        ROOTFS_TYPE=$(blkid -o value -s TYPE ${ROOTFS_DEVICE})
-    else
-        ROOTFS_TYPE=$(df -T $ROOTFS_MOUNTPOINT | awk 'NR==2 {print $2}')
-    fi
-    STORE_FS_TYPE=$ROOTFS_TYPE
+    STORE_FS_TYPE=$(df -T $ROOTFS_MOUNTPOINT | awk 'NR==2 {print $2}')
+    # 如果还是被识别成了 overlay，强制指定为 ext4
+    [[ "$STORE_FS_TYPE" == "overlay" || "$STORE_FS_TYPE" == "overlayroot" ]] && STORE_FS_TYPE="ext4"
 fi
 
 if [[ $STORE_FS_TYPE == "btrfs" ]]; then
@@ -282,15 +275,13 @@ fi
 
 CURDATE=$(date "+%Y%m%d%H%M%S")
 
-# 从指定目录下获取版本信息
 if [[ -f "$SOURCE_PATH/etc/os-release" ]]; then
     OS_D=$(grep "^PRETTY_NAME=" "$SOURCE_PATH/etc/os-release" | cut -d= -f2 | tr -d '"')
 else
     OS_D="Unknown"
-    echo -e "\033[33m Warning: Unable to determine OS version from $SOURCE_PATH/etc/os-release. Using default name: Unknown \033[0m"
 fi
 
-IMAGE_FILE=$DEST_PATH/${OS_D// /_}_HW_${STORE_FS_TYPE}_$CURDATE.img  # 替换空格为下划线
+IMAGE_FILE=$DEST_PATH/${OS_D// /_}_HW_${STORE_FS_TYPE}_$CURDATE.img
 TEMP_MOUNT_POINT=`mktemp -d -p $DEST_PATH`
 
 set -e
@@ -313,6 +304,7 @@ else
 fi
 
 echo "sync..."
+# 核心排除：彻底排除外部挂载的数据（包括可能挂载在 /media 里面的 userdata 真实数据和系统自身镜像文件）
 rsync -aqx --delete --exclude={"$IMAGE_FILE","$TEMP_MOUNT_POINT"} ${ROOTFS_MOUNTPOINT}/ ${TEMP_MOUNT_POINT}/
 echo "sync finish"
 
