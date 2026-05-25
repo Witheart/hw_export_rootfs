@@ -22,9 +22,8 @@ function showhelp()
       2. 支持 ext4 和 btrfs 文件系统类型
       3. 自动清理 APT 和 Snap 缓存
       4. 创建版本信息文件，包含构建时间、提交信息和内核版本等
-
-    版本说明：
-      优化：适配 overlayroot 环境，默认提取只读底层，并在同步后安全清理。
+      5. [核心优化] 废弃原厂 1.5 倍冗余容量计算，统一预分配逻辑
+      6. [核心优化] 修复 ext4 镜像缩容 (resize2fs) 失效的底层 Bug
     "
     exit -1
 }
@@ -100,7 +99,7 @@ function prepare_rootfs()
 function clead_target_rootfs()
 {
     ROOT_DIR=$1
-    # 新增：检测并删除 /etc/firstboot_done 文件
+    # 检测并删除 /etc/firstboot_done 文件
     if [[ -f "${ROOT_DIR}/etc/firstboot_done" ]]; then
         echo "⚠️  检测到首次启动标记文件，执行删除操作"
         rm -f "${ROOT_DIR}/etc/firstboot_done"
@@ -108,7 +107,7 @@ function clead_target_rootfs()
         echo "ℹ️  未找到/etc/firstboot_done文件，跳过删除"
     fi
 
-    # 新增：检测并删除 ToDesk 注册文件
+    # 检测并删除 ToDesk 注册文件
     if [[ -f "${ROOT_DIR}/etc/todesk/reg.conf" ]]; then
         echo "⚠️  检测到预装 todesk 注册文件，执行删除操作（重置识别码）"
         rm -f "${ROOT_DIR}/etc/todesk/reg.conf"
@@ -116,7 +115,7 @@ function clead_target_rootfs()
         echo "ℹ️  未找到/etc/todesk/reg.conf文件，跳过删除"
     fi
     
-    # 在临时可写目录中追加补救式的底层清理（针对从只读源复制过来的情况）
+    # 在临时可写目录中追加补救式的底层清理
     rm -rf ${ROOT_DIR}/var/cache/apt/archives/*
     rm -rf ${ROOT_DIR}/usr/share/doc/*
     rm -rf ${ROOT_DIR}/var/lib/apt/lists/*
@@ -125,7 +124,7 @@ function clead_target_rootfs()
     find ${ROOT_DIR}/var/log/ -type f -name "*.gz" -exec rm {} \;
     find ${ROOT_DIR}/var/log/ -type f -exec truncate -s 0 {} \;
 
-    # 新增：清理 systemd journal 日志
+    # 清理 systemd journal 日志
     echo "清理 systemd journal 日志..."
     if [[ -d "${ROOT_DIR}/var/log/journal" ]]; then
         rm -rf ${ROOT_DIR}/var/log/journal/*
@@ -252,7 +251,14 @@ prepare_rootfs
 
 # 智能识别底层实际文件系统类型
 if [[ $STORE_FS_TYPE == "" ]]; then
-    STORE_FS_TYPE=$(df -T $ROOTFS_MOUNTPOINT | awk 'NR==2 {print $2}')
+    if [[ $ROOTFS_MOUNTPOINT == "/" ]]; then
+        ROOTFS_DEVICE=`findmnt -n -o SOURCE --target /`
+        ROOTFS_TYPE=$(blkid -o value -s TYPE ${ROOTFS_DEVICE})
+    else
+        ROOTFS_TYPE=$(df -T $ROOTFS_MOUNTPOINT | awk 'NR==2 {print $2}')
+    fi
+    STORE_FS_TYPE=$ROOTFS_TYPE
+    
     # 如果还是被识别成了 overlay，强制指定为 ext4
     [[ "$STORE_FS_TYPE" == "overlay" || "$STORE_FS_TYPE" == "overlayroot" ]] && STORE_FS_TYPE="ext4"
 fi
@@ -263,6 +269,7 @@ else
     ROOTFS_SIZE=`du -s -k $ROOTFS_MOUNTPOINT | awk '{print $1}'`
 fi
 
+# 核心修正：统一容量估算公式（按实际体积放大 10% + 300MB 缓冲）
 IMAGE_SIZE=$((ROOTFS_SIZE>>10))
 IMAGE_SIZE=$((IMAGE_SIZE+IMAGE_SIZE/10+300))
 echo -e "MEDIA FREE SPACE SIZE \t $MEDIA_FREE_SPACE \t MBytes"
@@ -297,14 +304,17 @@ if [[ $STORE_FS_TYPE == "btrfs" ]]; then
 else
     INODE_COUNT=$(find "${ROOTFS_MOUNTPOINT}" 2>/dev/null | wc -l)
     INODE_COUNT=$((INODE_COUNT+512))
-    BLOCK_COUNT=$(((ROOTFS_SIZE+INODE_COUNT/4)*15/10))
-
-    mkfs.ext4 -Fq -L rootfs -b 1024 -I 128 -N $INODE_COUNT $IMAGE_FILE $BLOCK_COUNT
+    
+    # 核心修正：废弃原 1.5 倍的区块计算，直接使用统一计算的 IMAGE_SIZE 创建镜像壳
+    truncate -s ${IMAGE_SIZE}M $IMAGE_FILE
+    
+    # 核心修正：使用标准块大小，自动适配，彻底解决 resize2fs 失败问题
+    mkfs.ext4 -Fq -L rootfs -I 256 -N $INODE_COUNT $IMAGE_FILE
+    
     mount $IMAGE_FILE $TEMP_MOUNT_POINT
 fi
 
 echo "sync..."
-# 核心排除：彻底排除外部挂载的数据（包括可能挂载在 /media 里面的 userdata 真实数据和系统自身镜像文件）
 rsync -aqx --delete --exclude={"$IMAGE_FILE","$TEMP_MOUNT_POINT"} ${ROOTFS_MOUNTPOINT}/ ${TEMP_MOUNT_POINT}/
 echo "sync finish"
 
@@ -328,8 +338,10 @@ clead_target_rootfs ${TEMP_MOUNT_POINT}
 umount_img
 
 if [[ "${STORE_FS_TYPE}" == "ext4" ]]; then
-    e2fsck -fy ${IMAGE_FILE} 2>&1 > /dev/null
-    resize2fs -M ${IMAGE_FILE} 2>&1 > /dev/null
-    tune2fs -C 1 -c 0 -i 0 -e "remount-ro" ${IMAGE_FILE} 2>&1 > /dev/null
+    # 核心修正：放开静默输出，展示终极瘦身过程的打印结果
+    echo -e "\n🧹 正在对镜像进行压缩 (resize2fs)..."
+    e2fsck -fy ${IMAGE_FILE}
+    resize2fs -M ${IMAGE_FILE}
+    tune2fs -C 1 -c 0 -i 0 -e "remount-ro" ${IMAGE_FILE}
 fi
 echo -e "\033[32m 根文件系统已成功导出至: $IMAGE_FILE \033[0m"
