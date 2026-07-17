@@ -107,6 +107,14 @@ function clead_target_rootfs()
         echo "ℹ️  未找到/etc/firstboot_done文件，跳过删除"
     fi
 
+    # 检测并删除 /etc/.rootfs_resized 文件
+    if [[ -f "${ROOT_DIR}/etc/.rootfs_resized" ]]; then
+        echo "⚠️  检测到 rootfs 已调整大小标记文件，执行删除操作（确保新镜像首次启动时重新执行分区调整）"
+        rm -f "${ROOT_DIR}/etc/.rootfs_resized"
+    else
+        echo "ℹ️  未找到/etc/.rootfs_resized文件，跳过删除"
+    fi
+
     # 检测并删除 ToDesk 注册文件
     if [[ -f "${ROOT_DIR}/etc/todesk/reg.conf" ]]; then
         echo "⚠️  检测到预装 todesk 注册文件，执行删除操作（重置识别码）"
