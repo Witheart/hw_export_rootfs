@@ -276,7 +276,7 @@ fi
 if [[ $STORE_FS_TYPE == "btrfs" ]]; then
     ROOTFS_SIZE=`btrfs filesystem usage -m $ROOTFS_MOUNTPOINT | grep "Device allocated" | awk '{print $3}'`
 else
-    ROOTFS_SIZE=`du -s -k $ROOTFS_MOUNTPOINT | awk '{print $1}'`
+    ROOTFS_SIZE=`du -s -k -x $ROOTFS_MOUNTPOINT | awk '{print $1}'`
 fi
 
 IMAGE_SIZE=$((ROOTFS_SIZE>>10))
@@ -313,7 +313,7 @@ if [[ $STORE_FS_TYPE == "btrfs" ]]; then
     umount $TEMP_MOUNT_POINT
     mount -t btrfs -o noatime,compress=lzo,subvol=root $IMAGE_FILE $TEMP_MOUNT_POINT
 else
-    INODE_COUNT=$(find "${ROOTFS_MOUNTPOINT}" 2>/dev/null | wc -l)
+    INODE_COUNT=$(find "${ROOTFS_MOUNTPOINT}" -xdev 2>/dev/null | wc -l)
     INODE_COUNT=$((INODE_COUNT+512))
     BLOCK_COUNT=$(((ROOTFS_SIZE+INODE_COUNT/4)*15/10))
 
