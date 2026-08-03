@@ -107,6 +107,109 @@ function prepare_rootfs()
     fi
 }
 
+function check_sensitive_data()
+{
+    ROOT_DIR=$1
+    local action
+
+    # 检测 NetworkManager 网络配置文件
+    local NM_DIR="${ROOT_DIR}/etc/NetworkManager/system-connections"
+    if [[ -d "$NM_DIR" ]] && [[ -n "$(ls -A "$NM_DIR" 2>/dev/null)" ]]; then
+        echo ""
+        echo "============================================"
+        echo -e "\033[33m 检测到 NetworkManager 网络配置文件:\033[0m"
+        echo "============================================"
+        ls -la "$NM_DIR" 2>/dev/null
+        echo ""
+        echo "发现以上网络配置文件，请选择处理方式:"
+        echo "  1) 保留配置，继续打包"
+        echo "  2) 清空配置文件，继续打包"
+        echo "  3) 停止打包，手动处理"
+        read -p "请输入选项 [1/2/3]: " action
+        case "$action" in
+            1)
+                echo "保留网络配置，继续打包..."
+                ;;
+            2)
+                echo "清空网络配置文件..."
+                rm -rf "${NM_DIR:?}"/*
+                echo "已清空网络配置文件"
+                ;;
+            3)
+                echo "已停止打包，请手动处理后再重新运行脚本"
+                exit 0
+                ;;
+            *)
+                echo -e "\033[31m 无效输入，已停止打包 \033[0m"
+                exit 1
+                ;;
+        esac
+    fi
+
+    # 检测用户垃圾桶
+    local has_trash=false
+    local trash_dirs=()
+    for user_home in "${ROOT_DIR}"/home/*/; do
+        [[ -d "$user_home" ]] || continue
+        local username=$(basename "$user_home")
+        local tf="${ROOT_DIR}/home/${username}/.local/share/Trash/files"
+        local ti="${ROOT_DIR}/home/${username}/.local/share/Trash/info"
+        if [[ -d "$tf" ]] && [[ -n "$(ls -A "$tf" 2>/dev/null)" ]]; then
+            has_trash=true
+            trash_dirs+=("$username")
+        elif [[ -d "$ti" ]] && [[ -n "$(ls -A "$ti" 2>/dev/null)" ]]; then
+            has_trash=true
+            trash_dirs+=("$username")
+        fi
+    done
+
+    if $has_trash; then
+        echo ""
+        echo "============================================"
+        echo -e "\033[33m 检测到用户垃圾桶中有文件:\033[0m"
+        echo "============================================"
+        for username in "${trash_dirs[@]}"; do
+            local tf="${ROOT_DIR}/home/${username}/.local/share/Trash/files"
+            local ti="${ROOT_DIR}/home/${username}/.local/share/Trash/info"
+            if [[ -d "$tf" ]] && [[ -n "$(ls -A "$tf" 2>/dev/null)" ]]; then
+                echo "用户 ${username} 垃圾桶文件 (files):"
+                ls -la "$tf" 2>/dev/null
+            fi
+            if [[ -d "$ti" ]] && [[ -n "$(ls -A "$ti" 2>/dev/null)" ]]; then
+                echo "用户 ${username} 垃圾桶信息 (info):"
+                ls -la "$ti" 2>/dev/null
+            fi
+        done
+        echo ""
+        echo "发现以上垃圾桶文件，请选择处理方式:"
+        echo "  1) 保留文件，继续打包"
+        echo "  2) 清空垃圾桶，继续打包"
+        echo "  3) 停止打包，手动处理"
+        read -p "请输入选项 [1/2/3]: " action
+        case "$action" in
+            1)
+                echo "保留垃圾桶文件，继续打包..."
+                ;;
+            2)
+                echo "清空垃圾桶文件..."
+                for username in "${trash_dirs[@]}"; do
+                    rm -rf "${ROOT_DIR}/home/${username}/.local/share/Trash/files"/*
+                    rm -rf "${ROOT_DIR}/home/${username}/.local/share/Trash/info"/*
+                done
+                echo "已清空所有用户垃圾桶"
+                ;;
+            3)
+                echo "已停止打包，请手动处理后再重新运行脚本"
+                exit 0
+                ;;
+            *)
+                echo -e "\033[31m 无效输入，已停止打包 \033[0m"
+                exit 1
+                ;;
+        esac
+    fi
+}
+
 function clead_target_rootfs()
 {
     ROOT_DIR=$1
@@ -288,6 +391,9 @@ if [[ $MEDIA_FREE_SPACE -lt $IMAGE_SIZE ]]; then
     echo -e "\033[31m No enough free space on $DEST_PATH \033[0m"
     exit -1
 fi
+
+# 打包前检测源 rootfs 中的敏感数据
+check_sensitive_data "${ROOTFS_MOUNTPOINT}"
 
 CURDATE=$(date "+%Y%m%d%H%M%S")
 
